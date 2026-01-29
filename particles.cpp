@@ -30,6 +30,10 @@ const float SPAWN_SPEED = 300.0f;   // Initial speed of particles
 // Background color settings
 const float HUE_INCREMENT = 6.0f; // Degrees per click (60 clicks = full rainbow)
 
+// Gravity well settings
+const float GRAVITY_WELL_STRENGTH = 50000000.0f; // Pull force (higher = stronger attraction)
+const float GRAVITY_WELL_RADIUS = 25.0f;         // Visual size of the well
+
 // ============================================
 // STEP 3: PARTICLE STRUCT
 // A struct is like a container that holds related data together
@@ -55,6 +59,12 @@ struct Particle
     float life;
 };
 
+// Gravity well - attracts particles toward it
+struct GravityWell
+{
+    float x, y; // Position
+};
+
 // ============================================
 // STEP 4: GLOBAL VARIABLES
 // These are accessible from anywhere in the program
@@ -64,6 +74,9 @@ struct Particle
 // and automatically grows when we add more
 std::vector<Particle> particles;
 
+// Gravity wells
+std::vector<GravityWell> gravityWells;
+
 // Background color (hue in degrees, 0-360)
 float backgroundHue = 0.0f;
 
@@ -71,6 +84,13 @@ float backgroundHue = 0.0f;
 bool mouseHeld = false;
 int mouseX = 0;
 int mouseY = 0;
+
+// Stats tracking
+int totalClicks = 0;
+int wallBounces = 0;
+float fpsTimer = 0.0f;
+int frameCount = 0;
+int currentFPS = 0;
 
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
@@ -139,7 +159,95 @@ void hslToRgb(float h, float s, float l, Uint8 &r, Uint8 &g, Uint8 &b)
 }
 
 // ============================================
-// STEP 6: SPAWN FUNCTION
+// STEP 6: DRAW NUMBER FUNCTION
+// Draws a number using 7-segment display style (no fonts needed!)
+// Each digit is made of rectangular segments
+// ============================================
+
+// Segment layout:     0
+//                    ---
+//                 1 |   | 2
+//                    ---  <- 3
+//                 4 |   | 5
+//                    ---
+//                     6
+
+// Which segments are on for each digit (0-9)
+const bool DIGIT_SEGMENTS[10][7] = {
+    {1, 1, 1, 0, 1, 1, 1}, // 0
+    {0, 0, 1, 0, 0, 1, 0}, // 1
+    {1, 0, 1, 1, 1, 0, 1}, // 2
+    {1, 0, 1, 1, 0, 1, 1}, // 3
+    {0, 1, 1, 1, 0, 1, 0}, // 4
+    {1, 1, 0, 1, 0, 1, 1}, // 5
+    {1, 1, 0, 1, 1, 1, 1}, // 6
+    {1, 0, 1, 0, 0, 1, 0}, // 7
+    {1, 1, 1, 1, 1, 1, 1}, // 8
+    {1, 1, 1, 1, 0, 1, 1}, // 9
+};
+
+void drawDigit(SDL_Renderer *renderer, int digit, int x, int y, int scale)
+{
+    if (digit < 0 || digit > 9)
+        return;
+
+    int w = scale;     // Segment width
+    int h = scale * 2; // Segment height (for vertical segments)
+    int t = scale / 3; // Thickness
+
+    // Segment positions relative to top-left of digit
+    SDL_Rect segments[7] = {
+        {x + t, y, w, t},                 // 0: top
+        {x, y + t, t, h},                 // 1: top-left
+        {x + w + t, y + t, t, h},         // 2: top-right
+        {x + t, y + h + t, w, t},         // 3: middle
+        {x, y + h + 2 * t, t, h},         // 4: bottom-left
+        {x + w + t, y + h + 2 * t, t, h}, // 5: bottom-right
+        {x + t, y + 2 * h + 2 * t, w, t}, // 6: bottom
+    };
+
+    for (int i = 0; i < 7; i++)
+    {
+        if (DIGIT_SEGMENTS[digit][i])
+        {
+            SDL_RenderFillRect(renderer, &segments[i]);
+        }
+    }
+}
+
+// Draw a full number (multiple digits)
+void drawNumber(SDL_Renderer *renderer, int number, int x, int y, int scale)
+{
+    if (number == 0)
+    {
+        drawDigit(renderer, 0, x, y, scale);
+        return;
+    }
+
+    // Count digits to know where to start
+    int temp = number;
+    int digitCount = 0;
+    while (temp > 0)
+    {
+        digitCount++;
+        temp /= 10;
+    }
+
+    // Draw from right to left
+    int digitWidth = scale * 2 + scale / 2; // Width of one digit plus spacing
+    int currentX = x + (digitCount - 1) * digitWidth;
+
+    while (number > 0)
+    {
+        int digit = number % 10;
+        drawDigit(renderer, digit, currentX, y, scale);
+        number /= 10;
+        currentX -= digitWidth;
+    }
+}
+
+// ============================================
+// STEP 7: SPAWN FUNCTION
 // Creates a burst of particles at the given position
 // ============================================
 
@@ -181,7 +289,7 @@ void spawnParticles(float spawnX, float spawnY)
 }
 
 // ============================================
-// STEP 7: UPDATE FUNCTION
+// STEP 8: UPDATE FUNCTION
 // Called every frame to move particles and apply physics
 // deltaTime = seconds since last frame (usually ~0.016 for 60fps)
 // ============================================
@@ -201,6 +309,31 @@ void updateParticles(float deltaTime)
         // velocity = velocity + acceleration * time
         p.vy += GRAVITY * deltaTime;
 
+        // Apply gravity well attraction
+        for (const GravityWell &well : gravityWells)
+        {
+            // Vector from particle to well
+            float dx = well.x - p.x;
+            float dy = well.y - p.y;
+
+            // Distance squared (avoid sqrt for efficiency)
+            float distSq = dx * dx + dy * dy;
+
+            // Avoid division by zero and limit max force when very close
+            if (distSq < 100.0f)
+                distSq = 100.0f;
+
+            // Gravitational force: F = strength / distance^2
+            float force = GRAVITY_WELL_STRENGTH / distSq;
+
+            // Get distance for normalizing direction
+            float dist = sqrt(distSq);
+
+            // Apply force in direction of well
+            p.vx += (dx / dist) * force * deltaTime;
+            p.vy += (dy / dist) * force * deltaTime;
+        }
+
         // Update position based on velocity
         // position = position + velocity * time
         p.x += p.vx * deltaTime;
@@ -213,24 +346,28 @@ void updateParticles(float deltaTime)
         {
             p.x = 0;                       // Put back inside
             p.vx = -p.vx * BOUNCE_DAMPING; // Reverse and reduce velocity
+            wallBounces++;
         }
         // Right wall
         if (p.x > WINDOW_WIDTH)
         {
             p.x = WINDOW_WIDTH;
             p.vx = -p.vx * BOUNCE_DAMPING;
+            wallBounces++;
         }
         // Top wall
         if (p.y < 0)
         {
             p.y = 0;
             p.vy = -p.vy * BOUNCE_DAMPING;
+            wallBounces++;
         }
         // Bottom wall (floor)
         if (p.y > WINDOW_HEIGHT)
         {
             p.y = WINDOW_HEIGHT;
             p.vy = -p.vy * BOUNCE_DAMPING;
+            wallBounces++;
         }
 
         // --- LIFETIME & FADING ---
@@ -257,7 +394,7 @@ void updateParticles(float deltaTime)
 }
 
 // ============================================
-// STEP 8: MAIN FUNCTION
+// STEP 9: MAIN FUNCTION
 // Entry point - sets up SDL and runs the game loop
 // ============================================
 
@@ -311,9 +448,11 @@ int main(int argc, char *argv[])
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     std::cout << "Particle System running!\n";
-    std::cout << "Click or hold mouse button to spawn particles.\n";
-    std::cout << "Each click changes the background color!\n";
-    std::cout << "Press ESC or close window to quit.\n";
+    std::cout << "Left-click: Spawn particles (hold to spray)\n";
+    std::cout << "Right-click: Place gravity well\n";
+    std::cout << "Middle-click: Clear all gravity wells\n";
+    std::cout << "ESC: Quit\n";
+    std::cout << "\nStats (top-left): FPS, Particles, Clicks, Bounces\n";
 
     // --- GAME LOOP VARIABLES ---
 
@@ -351,23 +490,45 @@ int main(int argc, char *argv[])
                     running = false;
                 }
             }
-            // Mouse button pressed - start spawning
+            // Mouse button pressed
             else if (event.type == SDL_MOUSEBUTTONDOWN)
             {
-                mouseHeld = true;
                 mouseX = event.button.x;
                 mouseY = event.button.y;
 
-                // Spawn particles and advance background color
-                spawnParticles(mouseX, mouseY);
-                backgroundHue += HUE_INCREMENT;
-                if (backgroundHue >= 360.0f)
-                    backgroundHue -= 360.0f;
+                // Left click - spawn particles
+                if (event.button.button == SDL_BUTTON_LEFT)
+                {
+                    mouseHeld = true;
+                    totalClicks++;
+
+                    // Spawn particles and advance background color
+                    spawnParticles(mouseX, mouseY);
+                    backgroundHue += HUE_INCREMENT;
+                    if (backgroundHue >= 360.0f)
+                        backgroundHue -= 360.0f;
+                }
+                // Right click - place gravity well
+                else if (event.button.button == SDL_BUTTON_RIGHT)
+                {
+                    GravityWell well;
+                    well.x = mouseX;
+                    well.y = mouseY;
+                    gravityWells.push_back(well);
+                }
+                // Middle click - clear all gravity wells
+                else if (event.button.button == SDL_BUTTON_MIDDLE)
+                {
+                    gravityWells.clear();
+                }
             }
-            // Mouse button released - stop spawning
+            // Mouse button released - stop spawning (left button only)
             else if (event.type == SDL_MOUSEBUTTONUP)
             {
-                mouseHeld = false;
+                if (event.button.button == SDL_BUTTON_LEFT)
+                {
+                    mouseHeld = false;
+                }
             }
             // Mouse moved - update position for continuous spawning
             else if (event.type == SDL_MOUSEMOTION)
@@ -386,6 +547,16 @@ int main(int argc, char *argv[])
         // --- UPDATE ---
         // Move particles, apply physics
         updateParticles(deltaTime);
+
+        // Update FPS counter
+        frameCount++;
+        fpsTimer += deltaTime;
+        if (fpsTimer >= 1.0f)
+        {
+            currentFPS = frameCount;
+            frameCount = 0;
+            fpsTimer -= 1.0f;
+        }
 
         // --- RENDER ---
 
@@ -411,6 +582,46 @@ int main(int argc, char *argv[])
             };
             SDL_RenderFillRect(renderer, &rect);
         }
+
+        // Draw gravity wells (purple swirling effect)
+        for (const GravityWell &well : gravityWells)
+        {
+            // Draw concentric rings for visual effect
+            for (int ring = 3; ring >= 0; ring--)
+            {
+                int alpha = 100 + ring * 40;
+                SDL_SetRenderDrawColor(renderer, 180, 100, 255, alpha);
+                int size = static_cast<int>(GRAVITY_WELL_RADIUS) - ring * 4;
+                SDL_Rect wellRect = {
+                    static_cast<int>(well.x) - size,
+                    static_cast<int>(well.y) - size,
+                    size * 2, size * 2};
+                SDL_RenderFillRect(renderer, &wellRect);
+            }
+        }
+
+        // --- DRAW STATS OVERLAY ---
+        // White text in top-left corner
+
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+
+        int statY = 10;
+        int scale = 4; // Size of digits
+
+        // FPS
+        drawNumber(renderer, currentFPS, 10, statY, scale);
+        statY += 30;
+
+        // Particle count
+        drawNumber(renderer, static_cast<int>(particles.size()), 10, statY, scale);
+        statY += 30;
+
+        // Total clicks
+        drawNumber(renderer, totalClicks, 10, statY, scale);
+        statY += 30;
+
+        // Wall bounces
+        drawNumber(renderer, wallBounces, 10, statY, scale);
 
         // Show what we drew (swap buffers)
         SDL_RenderPresent(renderer);
