@@ -40,6 +40,13 @@ const float GRAVITY_WELL_STRENGTH = 50000000.0f; // Pull force (higher = stronge
 const float GRAVITY_WELL_RADIUS = 25.0f;         // Visual size of the well
 const float GRAVITY_WELL_SUCK_RADIUS = 15.0f;    // Particles within this distance get consumed
 
+// Visual effects settings
+const int TRAIL_LENGTH = 8;         // Number of trail segments per particle
+const float TRAIL_SPACING = 0.02f;  // Seconds between trail updates
+const float MAX_SPEED = 800.0f;     // Speed at which particles are "hottest"
+const float SHAKE_DECAY = 8.0f;     // How fast screen shake fades
+const float SHAKE_INTENSITY = 3.0f; // Shake amount per particle sucked
+
 // ============================================
 // STEP 3: PARTICLE STRUCT
 // A struct is like a container that holds related data together
@@ -55,7 +62,7 @@ struct Particle
     // vx = horizontal speed, vy = vertical speed
     float vx, vy;
 
-    // Color (RGB values 0-255)
+    // Base color (RGB values 0-255) - will be modified by velocity
     Uint8 r, g, b;
 
     // Alpha (transparency: 1.0 = fully visible, 0.0 = invisible)
@@ -63,6 +70,12 @@ struct Particle
 
     // Life remaining (seconds until this particle dies)
     float life;
+
+    // Trail history (previous positions for afterglow effect)
+    float trailX[TRAIL_LENGTH];
+    float trailY[TRAIL_LENGTH];
+    int trailIndex;   // Current position in circular buffer
+    float trailTimer; // Time until next trail update
 };
 
 // Gravity well - attracts particles toward it
@@ -95,6 +108,9 @@ int mouseY = 0;
 int totalParticlesCreated = 0;
 int particlesSucked = 0;
 int totalClicks = 0;
+
+// Screen shake effect
+float screenShake = 0.0f;
 
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
@@ -391,6 +407,15 @@ void spawnParticles(float spawnX, float spawnY)
         // Full lifetime
         p.life = PARTICLE_LIFETIME;
 
+        // Initialize trail history (all positions start at spawn point)
+        for (int t = 0; t < TRAIL_LENGTH; t++)
+        {
+            p.trailX[t] = spawnX;
+            p.trailY[t] = spawnY;
+        }
+        p.trailIndex = 0;
+        p.trailTimer = 0.0f;
+
         // Add to our vector of particles
         particles.push_back(p);
         totalParticlesCreated++;
@@ -450,11 +475,22 @@ void updateParticles(float deltaTime)
             p.vy += (dy / dist) * force * deltaTime;
         }
 
-        // If sucked by well, remove particle and continue
+        // If sucked by well, remove particle and add screen shake
         if (suckedByWell)
         {
+            screenShake += SHAKE_INTENSITY;
             it = particles.erase(it);
             continue;
+        }
+
+        // Update trail history (circular buffer)
+        p.trailTimer += deltaTime;
+        if (p.trailTimer >= TRAIL_SPACING)
+        {
+            p.trailTimer = 0.0f;
+            p.trailX[p.trailIndex] = p.x;
+            p.trailY[p.trailIndex] = p.y;
+            p.trailIndex = (p.trailIndex + 1) % TRAIL_LENGTH;
         }
 
         // Update position based on velocity
@@ -676,6 +712,14 @@ int main(int argc, char *argv[])
         // Move particles, apply physics
         updateParticles(deltaTime);
 
+        // Decay screen shake over time
+        if (screenShake > 0)
+        {
+            screenShake -= SHAKE_DECAY * deltaTime;
+            if (screenShake < 0)
+                screenShake = 0;
+        }
+
         // --- RENDER ---
 
         // Calculate scale factor based on window size
@@ -690,24 +734,91 @@ int main(int argc, char *argv[])
         SDL_SetRenderDrawColor(renderer, bgR, bgG, bgB, 255);
         SDL_RenderClear(renderer);
 
-        // Scaled particle size
-        int particleSize = static_cast<int>(4 * scale);
-        if (particleSize < 2)
-            particleSize = 2;
-        int particleHalf = particleSize / 2;
+        // Calculate screen shake offset
+        int shakeOffsetX = 0;
+        int shakeOffsetY = 0;
+        if (screenShake > 0)
+        {
+            std::uniform_real_distribution<> shakeDist(-screenShake, screenShake);
+            shakeOffsetX = static_cast<int>(shakeDist(gen) * scale);
+            shakeOffsetY = static_cast<int>(shakeDist(gen) * scale);
+        }
 
-        // Draw each particle
+        // Scaled particle size
+        int particleRadius = static_cast<int>(3 * scale);
+        if (particleRadius < 2)
+            particleRadius = 2;
+
+        // Draw each particle with trails and velocity coloring
         for (const Particle &p : particles)
         {
-            // Set color with current alpha
-            Uint8 alphaValue = static_cast<Uint8>(p.alpha * 255);
-            SDL_SetRenderDrawColor(renderer, p.r, p.g, p.b, alphaValue);
+            // Calculate speed for velocity-based coloring
+            float speed = sqrt(p.vx * p.vx + p.vy * p.vy);
+            float speedRatio = speed / MAX_SPEED;
+            if (speedRatio > 1.0f)
+                speedRatio = 1.0f;
 
-            SDL_Rect rect = {
-                static_cast<int>(p.x) - particleHalf,
-                static_cast<int>(p.y) - particleHalf,
-                particleSize, particleSize};
-            SDL_RenderFillRect(renderer, &rect);
+            // Color gradient: blue (cold/slow) -> cyan -> yellow -> orange -> red (hot/fast)
+            Uint8 velR, velG, velB;
+            if (speedRatio < 0.25f)
+            {
+                // Blue to cyan
+                float t = speedRatio / 0.25f;
+                velR = static_cast<Uint8>(50 * t);
+                velG = static_cast<Uint8>(100 + 155 * t);
+                velB = 255;
+            }
+            else if (speedRatio < 0.5f)
+            {
+                // Cyan to yellow
+                float t = (speedRatio - 0.25f) / 0.25f;
+                velR = static_cast<Uint8>(50 + 205 * t);
+                velG = 255;
+                velB = static_cast<Uint8>(255 - 255 * t);
+            }
+            else if (speedRatio < 0.75f)
+            {
+                // Yellow to orange
+                float t = (speedRatio - 0.5f) / 0.25f;
+                velR = 255;
+                velG = static_cast<Uint8>(255 - 100 * t);
+                velB = 0;
+            }
+            else
+            {
+                // Orange to red
+                float t = (speedRatio - 0.75f) / 0.25f;
+                velR = 255;
+                velG = static_cast<Uint8>(155 - 155 * t);
+                velB = 0;
+            }
+
+            // Draw trail (fading afterimages) - oldest to newest
+            for (int t = 0; t < TRAIL_LENGTH; t++)
+            {
+                // Get trail position from circular buffer (oldest first)
+                int idx = (p.trailIndex + t) % TRAIL_LENGTH;
+                int trailX = static_cast<int>(p.trailX[idx]) + shakeOffsetX;
+                int trailY = static_cast<int>(p.trailY[idx]) + shakeOffsetY;
+
+                // Trail gets more transparent and smaller the older it is
+                float trailAge = static_cast<float>(t) / TRAIL_LENGTH;
+                Uint8 trailAlpha = static_cast<Uint8>(p.alpha * 80 * (1.0f - trailAge));
+                int trailRadius = static_cast<int>(particleRadius * (0.3f + 0.5f * trailAge));
+
+                if (trailAlpha > 5 && trailRadius > 0)
+                {
+                    SDL_SetRenderDrawColor(renderer, velR, velG, velB, trailAlpha);
+                    drawFilledCircle(renderer, trailX, trailY, trailRadius);
+                }
+            }
+
+            // Draw main particle as a circle with velocity color
+            int px = static_cast<int>(p.x) + shakeOffsetX;
+            int py = static_cast<int>(p.y) + shakeOffsetY;
+            Uint8 alphaValue = static_cast<Uint8>(p.alpha * 255);
+            SDL_SetRenderDrawColor(renderer, velR, velG, velB, alphaValue);
+            drawFilledCircle(renderer, px, py, particleRadius);
         }
 
         // Scaled gravity well size
@@ -721,8 +832,8 @@ int main(int argc, char *argv[])
         // Draw gravity wells (cyberpunk circular style)
         for (const GravityWell &well : gravityWells)
         {
-            int cx = static_cast<int>(well.x);
-            int cy = static_cast<int>(well.y);
+            int cx = static_cast<int>(well.x) + shakeOffsetX;
+            int cy = static_cast<int>(well.y) + shakeOffsetY;
 
             // Outer cyan glow
             SDL_SetRenderDrawColor(renderer, 0, 255, 255, 60);
