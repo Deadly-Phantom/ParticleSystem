@@ -33,6 +33,7 @@ const float HUE_INCREMENT = 6.0f; // Degrees per click (60 clicks = full rainbow
 // Gravity well settings
 const float GRAVITY_WELL_STRENGTH = 50000000.0f; // Pull force (higher = stronger attraction)
 const float GRAVITY_WELL_RADIUS = 25.0f;         // Visual size of the well
+const float GRAVITY_WELL_SUCK_RADIUS = 15.0f;    // Particles within this distance get consumed
 
 // ============================================
 // STEP 3: PARTICLE STRUCT
@@ -86,11 +87,11 @@ int mouseX = 0;
 int mouseY = 0;
 
 // Stats tracking
-int totalClicks = 0;
-int wallBounces = 0;
-float fpsTimer = 0.0f;
-int frameCount = 0;
-int currentFPS = 0;
+int totalParticlesCreated = 0;
+int particlesSucked = 0;
+float clickTimer = 0.0f;
+int recentClicks = 0;
+float clickSpeed = 0.0f; // Clicks per second
 
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
@@ -159,11 +160,115 @@ void hslToRgb(float h, float s, float l, Uint8 &r, Uint8 &g, Uint8 &b)
 }
 
 // ============================================
-// STEP 6: DRAW NUMBER FUNCTION
-// Draws a number using 7-segment display style (no fonts needed!)
-// Each digit is made of rectangular segments
+// STEP 6: DRAWING HELPER FUNCTIONS
+// Circle drawing, numbers, and text labels
 // ============================================
 
+// Draw a filled circle (for gravity wells)
+void drawFilledCircle(SDL_Renderer *renderer, int centerX, int centerY, int radius)
+{
+    for (int y = -radius; y <= radius; y++)
+    {
+        for (int x = -radius; x <= radius; x++)
+        {
+            if (x * x + y * y <= radius * radius)
+            {
+                SDL_RenderDrawPoint(renderer, centerX + x, centerY + y);
+            }
+        }
+    }
+}
+
+// Draw a circle outline (for glow rings)
+void drawCircleOutline(SDL_Renderer *renderer, int centerX, int centerY, int radius, int thickness)
+{
+    for (int y = -radius - thickness; y <= radius + thickness; y++)
+    {
+        for (int x = -radius - thickness; x <= radius + thickness; x++)
+        {
+            int distSq = x * x + y * y;
+            int innerSq = (radius - thickness) * (radius - thickness);
+            int outerSq = (radius + thickness) * (radius + thickness);
+            if (distSq >= innerSq && distSq <= outerSq)
+            {
+                SDL_RenderDrawPoint(renderer, centerX + x, centerY + y);
+            }
+        }
+    }
+}
+
+// Simple 3x5 pixel font for labels (compact)
+// Each letter is a 3-wide, 5-tall bitmap stored as 5 rows of 3 bits
+const uint8_t MINI_FONT[26][5] = {
+    {0b010, 0b101, 0b111, 0b101, 0b101}, // A
+    {0b110, 0b101, 0b110, 0b101, 0b110}, // B
+    {0b011, 0b100, 0b100, 0b100, 0b011}, // C
+    {0b110, 0b101, 0b101, 0b101, 0b110}, // D
+    {0b111, 0b100, 0b110, 0b100, 0b111}, // E
+    {0b111, 0b100, 0b110, 0b100, 0b100}, // F
+    {0b011, 0b100, 0b101, 0b101, 0b011}, // G
+    {0b101, 0b101, 0b111, 0b101, 0b101}, // H
+    {0b111, 0b010, 0b010, 0b010, 0b111}, // I
+    {0b001, 0b001, 0b001, 0b101, 0b010}, // J
+    {0b101, 0b110, 0b100, 0b110, 0b101}, // K
+    {0b100, 0b100, 0b100, 0b100, 0b111}, // L
+    {0b101, 0b111, 0b111, 0b101, 0b101}, // M
+    {0b101, 0b111, 0b111, 0b111, 0b101}, // N
+    {0b010, 0b101, 0b101, 0b101, 0b010}, // O
+    {0b110, 0b101, 0b110, 0b100, 0b100}, // P
+    {0b010, 0b101, 0b101, 0b110, 0b011}, // Q
+    {0b110, 0b101, 0b110, 0b101, 0b101}, // R
+    {0b011, 0b100, 0b010, 0b001, 0b110}, // S
+    {0b111, 0b010, 0b010, 0b010, 0b010}, // T
+    {0b101, 0b101, 0b101, 0b101, 0b011}, // U
+    {0b101, 0b101, 0b101, 0b101, 0b010}, // V
+    {0b101, 0b101, 0b111, 0b111, 0b101}, // W
+    {0b101, 0b101, 0b010, 0b101, 0b101}, // X
+    {0b101, 0b101, 0b010, 0b010, 0b010}, // Y
+    {0b111, 0b001, 0b010, 0b100, 0b111}, // Z
+};
+
+void drawLetter(SDL_Renderer *renderer, char c, int x, int y, int scale)
+{
+    int index = -1;
+    if (c >= 'A' && c <= 'Z')
+        index = c - 'A';
+    else if (c >= 'a' && c <= 'z')
+        index = c - 'a';
+    else
+        return;
+
+    for (int row = 0; row < 5; row++)
+    {
+        for (int col = 0; col < 3; col++)
+        {
+            if (MINI_FONT[index][row] & (0b100 >> col))
+            {
+                SDL_Rect pixel = {x + col * scale, y + row * scale, scale, scale};
+                SDL_RenderFillRect(renderer, &pixel);
+            }
+        }
+    }
+}
+
+void drawText(SDL_Renderer *renderer, const char *text, int x, int y, int scale)
+{
+    int cursorX = x;
+    for (int i = 0; text[i] != '\0'; i++)
+    {
+        if (text[i] == ' ')
+        {
+            cursorX += scale * 2;
+        }
+        else
+        {
+            drawLetter(renderer, text[i], cursorX, y, scale);
+            cursorX += scale * 4; // 3 pixels + 1 spacing
+        }
+    }
+}
+
+// 7-segment display for numbers
 // Segment layout:     0
 //                    ---
 //                 1 |   | 2
@@ -285,6 +390,7 @@ void spawnParticles(float spawnX, float spawnY)
 
         // Add to our vector of particles
         particles.push_back(p);
+        totalParticlesCreated++;
     }
 }
 
@@ -302,6 +408,7 @@ void updateParticles(float deltaTime)
     {
         // Get reference to current particle (so we can modify it)
         Particle &p = *it;
+        bool suckedByWell = false;
 
         // --- PHYSICS ---
 
@@ -318,6 +425,15 @@ void updateParticles(float deltaTime)
 
             // Distance squared (avoid sqrt for efficiency)
             float distSq = dx * dx + dy * dy;
+            float dist = sqrt(distSq);
+
+            // Check if particle is close enough to be sucked in
+            if (dist < GRAVITY_WELL_SUCK_RADIUS)
+            {
+                suckedByWell = true;
+                particlesSucked++;
+                break;
+            }
 
             // Avoid division by zero and limit max force when very close
             if (distSq < 100.0f)
@@ -326,12 +442,16 @@ void updateParticles(float deltaTime)
             // Gravitational force: F = strength / distance^2
             float force = GRAVITY_WELL_STRENGTH / distSq;
 
-            // Get distance for normalizing direction
-            float dist = sqrt(distSq);
-
             // Apply force in direction of well
             p.vx += (dx / dist) * force * deltaTime;
             p.vy += (dy / dist) * force * deltaTime;
+        }
+
+        // If sucked by well, remove particle and continue
+        if (suckedByWell)
+        {
+            it = particles.erase(it);
+            continue;
         }
 
         // Update position based on velocity
@@ -344,30 +464,26 @@ void updateParticles(float deltaTime)
         // Left wall
         if (p.x < 0)
         {
-            p.x = 0;                       // Put back inside
-            p.vx = -p.vx * BOUNCE_DAMPING; // Reverse and reduce velocity
-            wallBounces++;
+            p.x = 0;
+            p.vx = -p.vx * BOUNCE_DAMPING;
         }
         // Right wall
         if (p.x > WINDOW_WIDTH)
         {
             p.x = WINDOW_WIDTH;
             p.vx = -p.vx * BOUNCE_DAMPING;
-            wallBounces++;
         }
         // Top wall
         if (p.y < 0)
         {
             p.y = 0;
             p.vy = -p.vy * BOUNCE_DAMPING;
-            wallBounces++;
         }
         // Bottom wall (floor)
         if (p.y > WINDOW_HEIGHT)
         {
             p.y = WINDOW_HEIGHT;
             p.vy = -p.vy * BOUNCE_DAMPING;
-            wallBounces++;
         }
 
         // --- LIFETIME & FADING ---
@@ -452,7 +568,7 @@ int main(int argc, char *argv[])
     std::cout << "Right-click: Place gravity well\n";
     std::cout << "Middle-click: Clear all gravity wells\n";
     std::cout << "ESC: Quit\n";
-    std::cout << "\nStats (top-left): FPS, Particles, Clicks, Bounces\n";
+    std::cout << "\nStats: MADE (created) | SUCKED (consumed) | CPS (clicks/sec)\n";
 
     // --- GAME LOOP VARIABLES ---
 
@@ -500,7 +616,7 @@ int main(int argc, char *argv[])
                 if (event.button.button == SDL_BUTTON_LEFT)
                 {
                     mouseHeld = true;
-                    totalClicks++;
+                    recentClicks++; // Track for click speed
 
                     // Spawn particles and advance background color
                     spawnParticles(mouseX, mouseY);
@@ -548,14 +664,13 @@ int main(int argc, char *argv[])
         // Move particles, apply physics
         updateParticles(deltaTime);
 
-        // Update FPS counter
-        frameCount++;
-        fpsTimer += deltaTime;
-        if (fpsTimer >= 1.0f)
+        // Update click speed (clicks per second)
+        clickTimer += deltaTime;
+        if (clickTimer >= 1.0f)
         {
-            currentFPS = frameCount;
-            frameCount = 0;
-            fpsTimer -= 1.0f;
+            clickSpeed = recentClicks / clickTimer;
+            recentClicks = 0;
+            clickTimer = 0.0f;
         }
 
         // --- RENDER ---
@@ -583,45 +698,59 @@ int main(int argc, char *argv[])
             SDL_RenderFillRect(renderer, &rect);
         }
 
-        // Draw gravity wells (purple swirling effect)
+        // Draw gravity wells (cyberpunk circular style)
         for (const GravityWell &well : gravityWells)
         {
-            // Draw concentric rings for visual effect
-            for (int ring = 3; ring >= 0; ring--)
-            {
-                int alpha = 100 + ring * 40;
-                SDL_SetRenderDrawColor(renderer, 180, 100, 255, alpha);
-                int size = static_cast<int>(GRAVITY_WELL_RADIUS) - ring * 4;
-                SDL_Rect wellRect = {
-                    static_cast<int>(well.x) - size,
-                    static_cast<int>(well.y) - size,
-                    size * 2, size * 2};
-                SDL_RenderFillRect(renderer, &wellRect);
-            }
+            int cx = static_cast<int>(well.x);
+            int cy = static_cast<int>(well.y);
+            int radius = static_cast<int>(GRAVITY_WELL_RADIUS);
+
+            // Outer cyan glow
+            SDL_SetRenderDrawColor(renderer, 0, 255, 255, 60);
+            drawFilledCircle(renderer, cx, cy, radius + 8);
+
+            // Purple glow ring
+            SDL_SetRenderDrawColor(renderer, 180, 0, 255, 100);
+            drawFilledCircle(renderer, cx, cy, radius + 4);
+
+            // Bright cyan ring
+            SDL_SetRenderDrawColor(renderer, 0, 255, 255, 180);
+            drawCircleOutline(renderer, cx, cy, radius, 2);
+
+            // Dark center (black hole effect)
+            SDL_SetRenderDrawColor(renderer, 5, 5, 15, 255);
+            drawFilledCircle(renderer, cx, cy, radius - 4);
+
+            // Tiny bright core
+            SDL_SetRenderDrawColor(renderer, 120, 0, 200, 200);
+            drawFilledCircle(renderer, cx, cy, 3);
         }
 
         // --- DRAW STATS OVERLAY ---
-        // White text in top-left corner
+        // Compact stats in top-left corner with labels
 
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+        int statY = 8;
+        int numScale = 3;  // Smaller number size
+        int textScale = 2; // Small text for labels
+        int labelX = 10;
+        int numberX = 70; // Numbers aligned to the right of labels
 
-        int statY = 10;
-        int scale = 4; // Size of digits
+        // CREATED - total particles spawned (cyan)
+        SDL_SetRenderDrawColor(renderer, 0, 255, 255, 220);
+        drawText(renderer, "MADE", labelX, statY + 2, textScale);
+        drawNumber(renderer, totalParticlesCreated, numberX, statY, numScale);
+        statY += 20;
 
-        // FPS
-        drawNumber(renderer, currentFPS, 10, statY, scale);
-        statY += 30;
+        // SUCKED - particles consumed by wells (purple)
+        SDL_SetRenderDrawColor(renderer, 200, 100, 255, 220);
+        drawText(renderer, "SUCK", labelX, statY + 2, textScale);
+        drawNumber(renderer, particlesSucked, numberX, statY, numScale);
+        statY += 20;
 
-        // Particle count
-        drawNumber(renderer, static_cast<int>(particles.size()), 10, statY, scale);
-        statY += 30;
-
-        // Total clicks
-        drawNumber(renderer, totalClicks, 10, statY, scale);
-        statY += 30;
-
-        // Wall bounces
-        drawNumber(renderer, wallBounces, 10, statY, scale);
+        // CPS - clicks per second (yellow)
+        SDL_SetRenderDrawColor(renderer, 255, 255, 100, 220);
+        drawText(renderer, "CPS", labelX, statY + 2, textScale);
+        drawNumber(renderer, static_cast<int>(clickSpeed), numberX, statY, numScale);
 
         // Show what we drew (swap buffers)
         SDL_RenderPresent(renderer);
