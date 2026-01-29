@@ -41,9 +41,9 @@ const float GRAVITY_WELL_RADIUS = 25.0f;         // Visual size of the well
 const float GRAVITY_WELL_SUCK_RADIUS = 15.0f;    // Particles within this distance get consumed
 
 // Visual effects settings
-const int TRAIL_LENGTH = 8;         // Number of trail segments per particle
-const float TRAIL_SPACING = 0.02f;  // Seconds between trail updates
-const float MAX_SPEED = 800.0f;     // Speed at which particles are "hottest"
+const int TRAIL_LENGTH = 8;          // Number of trail segments per particle
+const float TRAIL_SPACING = 0.02f;   // Seconds between trail updates
+const float MAX_SPEED = 800.0f;      // Speed at which particles are "hottest"
 const float SHAKE_DECAY = 8.0f;      // How fast screen shake fades
 const float SHAKE_INTENSITY = 0.02f; // Shake amount per particle sucked
 
@@ -479,7 +479,8 @@ void updateParticles(float deltaTime)
         if (suckedByWell)
         {
             screenShake += SHAKE_INTENSITY;
-            if (screenShake > 5.0f) screenShake = 5.0f; // Cap max shake
+            if (screenShake > 5.0f)
+                screenShake = 5.0f; // Cap max shake
             it = particles.erase(it);
             continue;
         }
