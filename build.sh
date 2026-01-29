@@ -17,7 +17,17 @@ if [ $? -eq 0 ]; then
     # Copy executable to app bundle
     cp particles "ParticleSystem.app/Contents/MacOS/ParticleSystem"
 
-    echo "App bundle created: ParticleSystem.app"
+    # Generate icon if it doesn't exist
+    if [ ! -f "ParticleSystem.app/Contents/Resources/ParticleSystem.icns" ]; then
+        echo "Generating app icon..."
+        python3 generate_icon.py
+    fi
+
+    # Touch to refresh Finder/Dock icon cache
+    touch ParticleSystem.app
+
+    echo ""
+    echo "App bundle ready: ParticleSystem.app"
     echo ""
     echo "To run:"
     echo "  Double-click ParticleSystem.app in Finder"
