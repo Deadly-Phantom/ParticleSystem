@@ -15,8 +15,9 @@
 // These control the behavior of our particle system
 // ============================================
 
-const int WINDOW_WIDTH = 800;
-const int WINDOW_HEIGHT = 600;
+// Window dimensions (not const - can be resized)
+int WINDOW_WIDTH = 800;
+int WINDOW_HEIGHT = 600;
 
 // Physics constants
 const float GRAVITY = 500.0f;         // Pixels per second^2 (downward acceleration)
@@ -89,9 +90,7 @@ int mouseY = 0;
 // Stats tracking
 int totalParticlesCreated = 0;
 int particlesSucked = 0;
-float clickTimer = 0.0f;
-int recentClicks = 0;
-float clickSpeed = 0.0f; // Clicks per second
+int totalClicks = 0;
 
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
@@ -529,14 +528,14 @@ int main(int argc, char *argv[])
     // Create the window
     // Parameters: title, x position, y position, width, height, flags
     // SDL_WINDOWPOS_CENTERED = center the window on screen
+    // SDL_WINDOW_RESIZABLE = allow user to resize the window
     SDL_Window *window = SDL_CreateWindow(
-        "Particle System - Click or drag to spawn!",
+        "Particle System",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         WINDOW_WIDTH,
         WINDOW_HEIGHT,
-        0 // No special flags
-    );
+        SDL_WINDOW_RESIZABLE);
 
     if (!window)
     {
@@ -567,8 +566,8 @@ int main(int argc, char *argv[])
     std::cout << "Left-click: Spawn particles (hold to spray)\n";
     std::cout << "Right-click: Place gravity well\n";
     std::cout << "Middle-click: Clear all gravity wells\n";
+    std::cout << "Drag window edges to resize\n";
     std::cout << "ESC: Quit\n";
-    std::cout << "\nStats: MADE (created) | SUCKED (consumed) | CPS (clicks/sec)\n";
 
     // --- GAME LOOP VARIABLES ---
 
@@ -616,7 +615,7 @@ int main(int argc, char *argv[])
                 if (event.button.button == SDL_BUTTON_LEFT)
                 {
                     mouseHeld = true;
-                    recentClicks++; // Track for click speed
+                    totalClicks++;
 
                     // Spawn particles and advance background color
                     spawnParticles(mouseX, mouseY);
@@ -652,6 +651,15 @@ int main(int argc, char *argv[])
                 mouseX = event.motion.x;
                 mouseY = event.motion.y;
             }
+            // Window resized
+            else if (event.type == SDL_WINDOWEVENT)
+            {
+                if (event.window.event == SDL_WINDOWEVENT_RESIZED)
+                {
+                    WINDOW_WIDTH = event.window.data1;
+                    WINDOW_HEIGHT = event.window.data2;
+                }
+            }
         }
 
         // Continuous spawning while mouse is held (background only changes on initial click)
@@ -663,15 +671,6 @@ int main(int argc, char *argv[])
         // --- UPDATE ---
         // Move particles, apply physics
         updateParticles(deltaTime);
-
-        // Update click speed (clicks per second)
-        clickTimer += deltaTime;
-        if (clickTimer >= 1.0f)
-        {
-            clickSpeed = recentClicks / clickTimer;
-            recentClicks = 0;
-            clickTimer = 0.0f;
-        }
 
         // --- RENDER ---
 
@@ -730,27 +729,27 @@ int main(int argc, char *argv[])
         // Compact stats in top-left corner with labels
 
         int statY = 8;
-        int numScale = 3;  // Smaller number size
-        int textScale = 2; // Small text for labels
+        int numScale = 3;  // Number size
+        int textScale = 2; // Text size for labels
         int labelX = 10;
-        int numberX = 70; // Numbers aligned to the right of labels
+        int numberX = 90; // Numbers aligned to the right of labels
 
         // CREATED - total particles spawned (cyan)
         SDL_SetRenderDrawColor(renderer, 0, 255, 255, 220);
-        drawText(renderer, "MADE", labelX, statY + 2, textScale);
+        drawText(renderer, "CREATED", labelX, statY + 2, textScale);
         drawNumber(renderer, totalParticlesCreated, numberX, statY, numScale);
         statY += 20;
 
-        // SUCKED - particles consumed by wells (purple)
+        // DESTROYED - particles consumed by wells (purple)
         SDL_SetRenderDrawColor(renderer, 200, 100, 255, 220);
-        drawText(renderer, "SUCK", labelX, statY + 2, textScale);
-        drawNumber(renderer, particlesSucked, numberX, statY, numScale);
+        drawText(renderer, "DESTROYED", labelX, statY + 2, textScale);
+        drawNumber(renderer, particlesSucked, numberX + 30, statY, numScale);
         statY += 20;
 
-        // CPS - clicks per second (yellow)
+        // CLICKS - total clicks (yellow)
         SDL_SetRenderDrawColor(renderer, 255, 255, 100, 220);
-        drawText(renderer, "CPS", labelX, statY + 2, textScale);
-        drawNumber(renderer, static_cast<int>(clickSpeed), numberX, statY, numScale);
+        drawText(renderer, "CLICKS", labelX, statY + 2, textScale);
+        drawNumber(renderer, totalClicks, numberX, statY, numScale);
 
         // Show what we drew (swap buffers)
         SDL_RenderPresent(renderer);
