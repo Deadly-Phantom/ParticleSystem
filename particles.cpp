@@ -27,6 +27,9 @@ const float PARTICLE_LIFETIME = 3.0f; // Seconds before particle dies
 const int PARTICLES_PER_CLICK = 25; // How many particles spawn per click
 const float SPAWN_SPEED = 300.0f;   // Initial speed of particles
 
+// Background color settings
+const float HUE_INCREMENT = 6.0f; // Degrees per click (60 clicks = full rainbow)
+
 // ============================================
 // STEP 3: PARTICLE STRUCT
 // A struct is like a container that holds related data together
@@ -61,6 +64,14 @@ struct Particle
 // and automatically grows when we add more
 std::vector<Particle> particles;
 
+// Background color (hue in degrees, 0-360)
+float backgroundHue = 0.0f;
+
+// Mouse state for continuous spawning
+bool mouseHeld = false;
+int mouseX = 0;
+int mouseY = 0;
+
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
 std::mt19937 gen(rd());                                  // Mersenne Twister algorithm
@@ -69,7 +80,66 @@ std::uniform_real_distribution<> speedDist(0.5, 1.5);    // Speed multiplier
 std::uniform_int_distribution<> colorDist(100, 255);     // Bright colors only
 
 // ============================================
-// STEP 5: SPAWN FUNCTION
+// STEP 5: HSL TO RGB CONVERSION
+// Converts Hue (0-360), Saturation (0-1), Lightness (0-1) to RGB (0-255)
+// This makes it easy to cycle through rainbow colors
+// ============================================
+
+void hslToRgb(float h, float s, float l, Uint8 &r, Uint8 &g, Uint8 &b)
+{
+    // Normalize hue to 0-1 range
+    h = fmod(h, 360.0f) / 360.0f;
+
+    float c = (1.0f - fabs(2.0f * l - 1.0f)) * s; // Chroma
+    float x = c * (1.0f - fabs(fmod(h * 6.0f, 2.0f) - 1.0f));
+    float m = l - c / 2.0f;
+
+    float rf, gf, bf;
+
+    if (h < 1.0f / 6.0f)
+    {
+        rf = c;
+        gf = x;
+        bf = 0;
+    }
+    else if (h < 2.0f / 6.0f)
+    {
+        rf = x;
+        gf = c;
+        bf = 0;
+    }
+    else if (h < 3.0f / 6.0f)
+    {
+        rf = 0;
+        gf = c;
+        bf = x;
+    }
+    else if (h < 4.0f / 6.0f)
+    {
+        rf = 0;
+        gf = x;
+        bf = c;
+    }
+    else if (h < 5.0f / 6.0f)
+    {
+        rf = x;
+        gf = 0;
+        bf = c;
+    }
+    else
+    {
+        rf = c;
+        gf = 0;
+        bf = x;
+    }
+
+    r = static_cast<Uint8>((rf + m) * 255);
+    g = static_cast<Uint8>((gf + m) * 255);
+    b = static_cast<Uint8>((bf + m) * 255);
+}
+
+// ============================================
+// STEP 6: SPAWN FUNCTION
 // Creates a burst of particles at the given position
 // ============================================
 
@@ -111,7 +181,7 @@ void spawnParticles(float spawnX, float spawnY)
 }
 
 // ============================================
-// STEP 6: UPDATE FUNCTION
+// STEP 7: UPDATE FUNCTION
 // Called every frame to move particles and apply physics
 // deltaTime = seconds since last frame (usually ~0.016 for 60fps)
 // ============================================
@@ -187,7 +257,7 @@ void updateParticles(float deltaTime)
 }
 
 // ============================================
-// STEP 7: MAIN FUNCTION
+// STEP 8: MAIN FUNCTION
 // Entry point - sets up SDL and runs the game loop
 // ============================================
 
@@ -207,7 +277,7 @@ int main(int argc, char *argv[])
     // Parameters: title, x position, y position, width, height, flags
     // SDL_WINDOWPOS_CENTERED = center the window on screen
     SDL_Window *window = SDL_CreateWindow(
-        "Particle System - Click to spawn!",
+        "Particle System - Click or drag to spawn!",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         WINDOW_WIDTH,
@@ -241,7 +311,8 @@ int main(int argc, char *argv[])
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     std::cout << "Particle System running!\n";
-    std::cout << "Click anywhere to spawn particles.\n";
+    std::cout << "Click or hold mouse button to spawn particles.\n";
+    std::cout << "Each click changes the background color!\n";
     std::cout << "Press ESC or close window to quit.\n";
 
     // --- GAME LOOP VARIABLES ---
@@ -280,14 +351,36 @@ int main(int argc, char *argv[])
                     running = false;
                 }
             }
-            // Mouse button clicked
+            // Mouse button pressed - start spawning
             else if (event.type == SDL_MOUSEBUTTONDOWN)
             {
-                // Get mouse position and spawn particles there
-                int mouseX = event.button.x;
-                int mouseY = event.button.y;
+                mouseHeld = true;
+                mouseX = event.button.x;
+                mouseY = event.button.y;
+
+                // Spawn particles and advance background color
                 spawnParticles(mouseX, mouseY);
+                backgroundHue += HUE_INCREMENT;
+                if (backgroundHue >= 360.0f)
+                    backgroundHue -= 360.0f;
             }
+            // Mouse button released - stop spawning
+            else if (event.type == SDL_MOUSEBUTTONUP)
+            {
+                mouseHeld = false;
+            }
+            // Mouse moved - update position for continuous spawning
+            else if (event.type == SDL_MOUSEMOTION)
+            {
+                mouseX = event.motion.x;
+                mouseY = event.motion.y;
+            }
+        }
+
+        // Continuous spawning while mouse is held (background only changes on initial click)
+        if (mouseHeld)
+        {
+            spawnParticles(mouseX, mouseY);
         }
 
         // --- UPDATE ---
@@ -296,8 +389,11 @@ int main(int argc, char *argv[])
 
         // --- RENDER ---
 
-        // Clear screen to dark gray
-        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+        // Clear screen with rainbow background color
+        // Using low lightness (0.15) to keep it dark but colorful
+        Uint8 bgR, bgG, bgB;
+        hslToRgb(backgroundHue, 0.6f, 0.15f, bgR, bgG, bgB);
+        SDL_SetRenderDrawColor(renderer, bgR, bgG, bgB, 255);
         SDL_RenderClear(renderer);
 
         // Draw each particle
