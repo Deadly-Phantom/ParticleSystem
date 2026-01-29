@@ -19,6 +19,10 @@
 int WINDOW_WIDTH = 800;
 int WINDOW_HEIGHT = 600;
 
+// Base dimensions for scaling (design size)
+const int BASE_WIDTH = 800;
+const int BASE_HEIGHT = 600;
+
 // Physics constants
 const float GRAVITY = 500.0f;         // Pixels per second^2 (downward acceleration)
 const float BOUNCE_DAMPING = 0.7f;    // Energy lost on bounce (0.7 = keeps 70% velocity)
@@ -674,12 +678,23 @@ int main(int argc, char *argv[])
 
         // --- RENDER ---
 
+        // Calculate scale factor based on window size
+        float scaleX = static_cast<float>(WINDOW_WIDTH) / BASE_WIDTH;
+        float scaleY = static_cast<float>(WINDOW_HEIGHT) / BASE_HEIGHT;
+        float scale = (scaleX + scaleY) / 2.0f; // Average scale
+
         // Clear screen with rainbow background color
         // Using low lightness (0.15) to keep it dark but colorful
         Uint8 bgR, bgG, bgB;
         hslToRgb(backgroundHue, 0.6f, 0.15f, bgR, bgG, bgB);
         SDL_SetRenderDrawColor(renderer, bgR, bgG, bgB, 255);
         SDL_RenderClear(renderer);
+
+        // Scaled particle size
+        int particleSize = static_cast<int>(4 * scale);
+        if (particleSize < 2)
+            particleSize = 2;
+        int particleHalf = particleSize / 2;
 
         // Draw each particle
         for (const Particle &p : particles)
@@ -688,63 +703,74 @@ int main(int argc, char *argv[])
             Uint8 alphaValue = static_cast<Uint8>(p.alpha * 255);
             SDL_SetRenderDrawColor(renderer, p.r, p.g, p.b, alphaValue);
 
-            // Draw as a 4x4 rectangle (small square)
             SDL_Rect rect = {
-                static_cast<int>(p.x) - 2, // Center the rect on particle position
-                static_cast<int>(p.y) - 2,
-                4, 4 // Width and height
-            };
+                static_cast<int>(p.x) - particleHalf,
+                static_cast<int>(p.y) - particleHalf,
+                particleSize, particleSize};
             SDL_RenderFillRect(renderer, &rect);
         }
+
+        // Scaled gravity well size
+        int wellRadius = static_cast<int>(GRAVITY_WELL_RADIUS * scale);
+        int glowOuter = static_cast<int>(8 * scale);
+        int glowInner = static_cast<int>(4 * scale);
+        int coreSize = static_cast<int>(3 * scale);
+        if (coreSize < 2)
+            coreSize = 2;
 
         // Draw gravity wells (cyberpunk circular style)
         for (const GravityWell &well : gravityWells)
         {
             int cx = static_cast<int>(well.x);
             int cy = static_cast<int>(well.y);
-            int radius = static_cast<int>(GRAVITY_WELL_RADIUS);
 
             // Outer cyan glow
             SDL_SetRenderDrawColor(renderer, 0, 255, 255, 60);
-            drawFilledCircle(renderer, cx, cy, radius + 8);
+            drawFilledCircle(renderer, cx, cy, wellRadius + glowOuter);
 
             // Purple glow ring
             SDL_SetRenderDrawColor(renderer, 180, 0, 255, 100);
-            drawFilledCircle(renderer, cx, cy, radius + 4);
+            drawFilledCircle(renderer, cx, cy, wellRadius + glowInner);
 
             // Bright cyan ring
             SDL_SetRenderDrawColor(renderer, 0, 255, 255, 180);
-            drawCircleOutline(renderer, cx, cy, radius, 2);
+            drawCircleOutline(renderer, cx, cy, wellRadius, static_cast<int>(2 * scale));
 
             // Dark center (black hole effect)
             SDL_SetRenderDrawColor(renderer, 5, 5, 15, 255);
-            drawFilledCircle(renderer, cx, cy, radius - 4);
+            drawFilledCircle(renderer, cx, cy, wellRadius - glowInner);
 
             // Tiny bright core
             SDL_SetRenderDrawColor(renderer, 120, 0, 200, 200);
-            drawFilledCircle(renderer, cx, cy, 3);
+            drawFilledCircle(renderer, cx, cy, coreSize);
         }
 
         // --- DRAW STATS OVERLAY ---
         // Compact stats in top-left corner with labels
 
-        int statY = 8;
-        int numScale = 3;  // Number size
-        int textScale = 2; // Text size for labels
-        int labelX = 10;
-        int numberX = 90; // Numbers aligned to the right of labels
+        int textScale = static_cast<int>(2 * scale);
+        int numScale = static_cast<int>(3 * scale);
+        if (textScale < 1)
+            textScale = 1;
+        if (numScale < 2)
+            numScale = 2;
+
+        int labelX = static_cast<int>(10 * scale);
+        int numberX = static_cast<int>(100 * scale); // All numbers aligned here
+        int statY = static_cast<int>(10 * scale);
+        int statSpacing = static_cast<int>(22 * scale);
 
         // CREATED - total particles spawned (cyan)
         SDL_SetRenderDrawColor(renderer, 0, 255, 255, 220);
         drawText(renderer, "CREATED", labelX, statY + 2, textScale);
         drawNumber(renderer, totalParticlesCreated, numberX, statY, numScale);
-        statY += 20;
+        statY += statSpacing;
 
         // DESTROYED - particles consumed by wells (purple)
         SDL_SetRenderDrawColor(renderer, 200, 100, 255, 220);
         drawText(renderer, "DESTROYED", labelX, statY + 2, textScale);
-        drawNumber(renderer, particlesSucked, numberX + 30, statY, numScale);
-        statY += 20;
+        drawNumber(renderer, particlesSucked, numberX, statY, numScale);
+        statY += statSpacing;
 
         // CLICKS - total clicks (yellow)
         SDL_SetRenderDrawColor(renderer, 255, 255, 100, 220);
