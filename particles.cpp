@@ -872,20 +872,20 @@ int main(int argc, char *argv[])
         int statY = static_cast<int>(10 * scale);
         int statSpacing = static_cast<int>(22 * scale);
 
-        // CREATED - total particles spawned (cyan)
-        SDL_SetRenderDrawColor(renderer, 0, 255, 255, 220);
+        // CREATED - total particles spawned (cyan/blue - cold, new)
+        SDL_SetRenderDrawColor(renderer, 50, 200, 255, 220);
         drawText(renderer, "CREATED", labelX, statY + 2, textScale);
         drawNumber(renderer, totalParticlesCreated, numberX, statY, numScale);
         statY += statSpacing;
 
-        // DESTROYED - particles consumed by wells (purple)
-        SDL_SetRenderDrawColor(renderer, 200, 100, 255, 220);
+        // DESTROYED - particles consumed by wells (red/orange - hot, fast)
+        SDL_SetRenderDrawColor(renderer, 255, 100, 50, 220);
         drawText(renderer, "DESTROYED", labelX, statY + 2, textScale);
         drawNumber(renderer, particlesSucked, numberX, statY, numScale);
         statY += statSpacing;
 
-        // CLICKS - total clicks (yellow)
-        SDL_SetRenderDrawColor(renderer, 255, 255, 100, 220);
+        // CLICKS - total clicks (green)
+        SDL_SetRenderDrawColor(renderer, 100, 255, 100, 220);
         drawText(renderer, "CLICKS", labelX, statY + 2, textScale);
         drawNumber(renderer, totalClicks, numberX, statY, numScale);
 
