@@ -30,6 +30,7 @@ app: $(EXECUTABLE)
 		echo "Generating icon..."; \
 		python3 generate_icon.py; \
 	fi
+	@codesign --force --deep --sign - $(APP_BUNDLE) 2>/dev/null || true
 	@touch $(APP_BUNDLE)
 	@echo "Built: $(APP_BUNDLE)"
 

@@ -40,6 +40,10 @@ const float GRAVITY_WELL_STRENGTH = 50000000.0f; // Pull force (higher = stronge
 const float GRAVITY_WELL_RADIUS = 25.0f;         // Visual size of the well
 const float GRAVITY_WELL_SUCK_RADIUS = 15.0f;    // Particles within this distance get consumed
 
+// Magnetic field settings (PHY180: Lorentz force F = qv × B)
+// With B perpendicular to screen: Fx = q*B*vy, Fy = -q*B*vx
+const float MAGNETIC_FIELD_STRENGTH = 2.0f;      // Tesla (magnetic field pointing out of screen)
+
 // Visual effects settings
 const int TRAIL_LENGTH = 8;          // Number of trail segments per particle
 const float TRAIL_SPACING = 0.02f;   // Seconds between trail updates
@@ -70,6 +74,9 @@ struct Particle
 
     // Life remaining (seconds until this particle dies)
     float life;
+
+    // Electric charge (+1 or -1) for magnetic force (PHY180: F = qv × B)
+    float charge;
 
     // Trail history (previous positions for afterglow effect)
     float trailX[TRAIL_LENGTH];
@@ -112,12 +119,16 @@ int totalClicks = 0;
 // Screen shake effect
 float screenShake = 0.0f;
 
+// Magnetic field toggle (press 'M' to toggle)
+bool magneticFieldEnabled = true;
+
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
 std::mt19937 gen(rd());                                  // Mersenne Twister algorithm
 std::uniform_real_distribution<> angleDist(0, 2 * M_PI); // Random angle 0-360 degrees (in radians)
 std::uniform_real_distribution<> speedDist(0.5, 1.5);    // Speed multiplier
 std::uniform_int_distribution<> colorDist(100, 255);     // Bright colors only
+std::uniform_int_distribution<> chargeDist(0, 1);        // Random charge: 0 -> -1, 1 -> +1
 
 // ============================================
 // STEP 5: HSL TO RGB CONVERSION
@@ -407,6 +418,9 @@ void spawnParticles(float spawnX, float spawnY)
         // Full lifetime
         p.life = PARTICLE_LIFETIME;
 
+        // Random charge (+1 or -1) for magnetic deflection
+        p.charge = chargeDist(gen) == 1 ? 1.0f : -1.0f;
+
         // Initialize trail history (all positions start at spawn point)
         for (int t = 0; t < TRAIL_LENGTH; t++)
         {
@@ -443,6 +457,18 @@ void updateParticles(float deltaTime)
         // Apply gravity (accelerate downward)
         // velocity = velocity + acceleration * time
         p.vy += GRAVITY * deltaTime;
+
+        // Apply magnetic force (PHY180: Lorentz force F = qv × B)
+        // With B pointing out of screen (z-direction):
+        //   F = q(v × B) = q(vy*B, -vx*B, 0)
+        // This creates circular motion! Cyclotron radius r = mv/(qB)
+        if (magneticFieldEnabled)
+        {
+            float magForceX = p.charge * MAGNETIC_FIELD_STRENGTH * p.vy;
+            float magForceY = -p.charge * MAGNETIC_FIELD_STRENGTH * p.vx;
+            p.vx += magForceX * deltaTime;
+            p.vy += magForceY * deltaTime;
+        }
 
         // Apply gravity well attraction
         for (const GravityWell &well : gravityWells)
@@ -608,6 +634,7 @@ int main(int argc, char *argv[])
     std::cout << "Left-click: Spawn particles (hold to spray)\n";
     std::cout << "Right-click: Place gravity well\n";
     std::cout << "Middle-click: Clear all gravity wells\n";
+    std::cout << "M: Toggle magnetic field (Lorentz force F = qv × B)\n";
     std::cout << "Drag window edges to resize\n";
     std::cout << "ESC: Quit\n";
 
@@ -645,6 +672,11 @@ int main(int argc, char *argv[])
                 if (event.key.keysym.sym == SDLK_ESCAPE)
                 {
                     running = false;
+                }
+                // M key toggles magnetic field
+                else if (event.key.keysym.sym == SDLK_m)
+                {
+                    magneticFieldEnabled = !magneticFieldEnabled;
                 }
             }
             // Mouse button pressed
