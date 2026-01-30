@@ -42,7 +42,7 @@ const float GRAVITY_WELL_SUCK_RADIUS = 15.0f;    // Particles within this distan
 
 // Magnetic field settings (PHY180: Lorentz force F = qv × B)
 // With B perpendicular to screen: Fx = q*B*vy, Fy = -q*B*vx
-const float MAGNETIC_FIELD_STRENGTH = 2.0f;      // Tesla (magnetic field pointing out of screen)
+const float MAGNETIC_FIELD_STRENGTH = 8.0f; // Tesla (magnetic field pointing out of screen)
 
 // Visual effects settings
 const int TRAIL_LENGTH = 8;          // Number of trail segments per particle
