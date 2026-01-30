@@ -44,6 +44,10 @@ const float GRAVITY_WELL_SUCK_RADIUS = 15.0f;    // Particles within this distan
 // With B perpendicular to screen: Fx = q*B*vy, Fy = -q*B*vx
 const float MAGNETIC_FIELD_STRENGTH = 8.0f; // Tesla (magnetic field pointing out of screen)
 
+// Vortex settings (MAT188: rotation matrix + PHY180: centripetal motion)
+// Creates swirling tornado/whirlpool patterns
+const float VORTEX_STRENGTH = 1500.0f; // Tangential velocity strength (strong enough to overcome gravity)
+
 // Visual effects settings
 const int TRAIL_LENGTH = 8;          // Number of trail segments per particle
 const float TRAIL_SPACING = 0.02f;   // Seconds between trail updates
@@ -120,7 +124,10 @@ int totalClicks = 0;
 float screenShake = 0.0f;
 
 // Magnetic field toggle (press 'M' to toggle)
-bool magneticFieldEnabled = true;
+bool magneticFieldEnabled = false;
+
+// Vortex toggle (press 'V' to toggle)
+bool vortexEnabled = false;
 
 // Random number generator (modern C++ way)
 std::random_device rd;                                   // Gets random seed from hardware
@@ -470,6 +477,32 @@ void updateParticles(float deltaTime)
             p.vy += magForceY * deltaTime;
         }
 
+        // Apply vortex force (MAT188: rotation + PHY180: tangential velocity)
+        // Creates swirling tornado/whirlpool patterns around screen center
+        if (vortexEnabled)
+        {
+            // Vector from screen center to particle
+            float centerX = WINDOW_WIDTH / 2.0f;
+            float centerY = WINDOW_HEIGHT / 2.0f;
+            float dx = p.x - centerX;
+            float dy = p.y - centerY;
+            float dist = sqrt(dx * dx + dy * dy);
+
+            if (dist > 5.0f) // Avoid singularity at center
+            {
+                // Tangential direction (perpendicular to radial, counterclockwise)
+                // From MAT188: rotate 90° using rotation matrix
+                // [cos90  -sin90] [dx]   [0  -1] [dx]   [-dy]
+                // [sin90   cos90] [dy] = [1   0] [dy] = [ dx]
+                float tangentX = -dy / dist;
+                float tangentY = dx / dist;
+
+                // Apply tangential acceleration (swirl force)
+                p.vx += tangentX * VORTEX_STRENGTH * deltaTime;
+                p.vy += tangentY * VORTEX_STRENGTH * deltaTime;
+            }
+        }
+
         // Apply gravity well attraction
         for (const GravityWell &well : gravityWells)
         {
@@ -635,6 +668,7 @@ int main(int argc, char *argv[])
     std::cout << "Right-click: Place gravity well\n";
     std::cout << "Middle-click: Clear all gravity wells\n";
     std::cout << "M: Toggle magnetic field (Lorentz force F = qv × B)\n";
+    std::cout << "V: Toggle vortex (rotation matrix + tangential velocity)\n";
     std::cout << "Drag window edges to resize\n";
     std::cout << "ESC: Quit\n";
 
@@ -677,6 +711,11 @@ int main(int argc, char *argv[])
                 else if (event.key.keysym.sym == SDLK_m)
                 {
                     magneticFieldEnabled = !magneticFieldEnabled;
+                }
+                // V key toggles vortex
+                else if (event.key.keysym.sym == SDLK_v)
+                {
+                    vortexEnabled = !vortexEnabled;
                 }
             }
             // Mouse button pressed
