@@ -1,0 +1,6 @@
+.DS_Store
+# build output
+particles
+ParticleSystem.app/Contents/MacOS/
+ParticleSystem.app/Contents/_CodeSignature/
+ParticleSystem.iconset/
